@@ -1,3 +1,4 @@
+# 请先阅读readme.md
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
