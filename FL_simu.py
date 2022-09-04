@@ -145,8 +145,8 @@ def train(train_args, UEs: list, device, train_loader, epoch):
         ue.model.train()
 
     for batch_idx, (data, target) in enumerate(train_loader):
-        if batch_idx > 100:
-            break
+        # if batch_idx > 100:
+        #     break
         for rank, ue in enumerate(UEs):
             # 分发数据
             data_alloc = alloc(data, len(UEs), rank)
@@ -201,7 +201,7 @@ def test(UEs: list, device, test_loader, epoch):
             # 重点就在这里，之前get了的时候模型就不在远处了，现在要把它送回去
 
 
-# 初始化UE
+# 初始化UE,num为个数
 def init_ue(num: int):
     for i in range(num):
         user = UE('user'+str(num), model)
