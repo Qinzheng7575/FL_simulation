@@ -1,3 +1,10 @@
+## 环境
+
+python 3.7.12
+torch 1.4.0
+torchvision 0.5.0
+syft 0.2.4
+
 ## 文件结构：
 
 FL_simu.py 是真正运行的代码，剩余代码是为了我方便对照留下的
