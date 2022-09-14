@@ -10,6 +10,7 @@ import time
 import copy
 import os
 import numpy as np
+from functions_used import *
 hook = sy.TorchHook(torch)
 train_args = {
     'use_cuda': True,
@@ -127,6 +128,23 @@ def transport():  # 模拟传输过程，
 
 
 # 模型聚合
+def aggregate_pro(source_list: list, out: Net):
+    out_param = out.state_dict()
+    for source in source_list:
+        param = source.model.state_dict()
+
+        Param_compression(param)
+        Param_recovery(param)
+
+        # print(param['conv.0.weight'][0][0])
+        # print(param['fc.0.weight'][0][:20])
+
+        for var in param:
+            out_param[var] = (param[var].to(device) + out_param[var])/2
+    out.load_state_dict(out_param)
+    return(out_param)
+
+
 def aggregate(source_list: list, out: Net):
     out_param = out.state_dict()
     for source in source_list:
@@ -172,8 +190,8 @@ def train(train_args, UEs: list, device, train_loader, epoch):
         ue.model.train()
 
     for batch_idx, (data, target) in enumerate(train_loader):
-        if batch_idx > 100:
-            break
+        # if batch_idx > 100:
+        #     break
         for rank, ue in enumerate(UEs):
             # 分发数据
             data_alloc = alloc(data, len(UEs), rank)
@@ -183,15 +201,16 @@ def train(train_args, UEs: list, device, train_loader, epoch):
             # 训练
             loss = ue.train(ue_data, ue_target)  # 此loss是从远处UE提取过来的
             if batch_idx % train_args['log_interval'] == 0:
-                print('Train Epoch:{}[{}/{}({:.06f}%)]\t {} Loss:{:.06f}'.format(
-                    epoch,
-                    batch_idx * train_args['batch_size'],
-                    len(train_loader)*train_args['batch_size'],
-                    100.*batch_idx/len(train_loader),
-                    ue.id,
-                    loss.item()
-                )
-                )
+                # print('Train Epoch:{}[{}/{}({:.06f}%)]\t {} Loss:{:.06f}'.format(
+                #     epoch,
+                #     batch_idx * train_args['batch_size'],
+                #     len(train_loader)*train_args['batch_size'],
+                #     100.*batch_idx/len(train_loader),
+                #     ue.id,
+                #     loss.item()
+                # )
+                # )
+                Loss_list.append(loss.item())
 
 
 # BS端进行聚合、测试
@@ -225,7 +244,7 @@ def test(UEs: list, device, test_loader, epoch):
         for ue in UEs:
             ue.model.load_state_dict(final_model_param)
             # ----------------------
-            torch.save(ue.model.state_dict(), 'cnn.pt')
+            # torch.save(ue.model.state_dict(), 'cnn.pt')
             # ----------------------
             ue.model.send(ue.name)
             # 重点就在这里，之前get了的时候模型就不在远处了，现在要把它送回去
@@ -240,30 +259,13 @@ def init_ue(num: int):
 
 model = Net().to(device)
 BS_model = copy.deepcopy(model)
-
+Loss_list = []
 init_ue(4)
 
 for epoch in range(1, train_args['epochs']+1):
     train(train_args, UE_list, device, federated_train_loader, epoch)
 
-    # for ue in UE_list:
-
-    # 模拟传输过程
-    # if epoch % train_args['aggre_interval'] == 0:
-    #     transport()
     test(UE_list, device, test_loader, epoch)
-
-    with open('before.txt', 'w', encoding="utf-8") as fp:
-        fp.write(str(BS_model))
-    file_stats = os.stat('before.txt')
-    print(file_stats.st_size / (1024 * 1024))
-
-    after_model = copy.deepcopy(BS_model.state_dict()).numpy().tolist()
-    Encode(after_model)
-    torch.save(after_model.state_dict(), 'after.pt')
-    file_stats = os.stat('after.pt')
-    print(file_stats.st_size / (1024 * 1024))
-
-    # ptfile = r'D:\\ForStudy\\python练习\\ML\\cnn.pt'
-    # net = torch.load(ptfile, map_location='cpu')
-    # print(net)
+    with open("loss_.txt", "a") as f:
+        f.write(str(Loss_list))
+        f.close()

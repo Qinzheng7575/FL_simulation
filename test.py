@@ -1,14 +1,12 @@
 from collections import OrderedDict
-import os
-from pyparsing import Dict
+from gettext import find
 import torch.nn.functional as F
 import torch.nn as nn
 import torch
-import numpy as np
+from functions_used import *
 
 a = torch.tensor([[0.1234, 2.1234, 3.1234], [
                  4.1234, 5.1234, 6.1234], [7.1234, 8.1234, 9.1234]])
-a1 = torch.ones_like(a)
 
 b = a.numpy().tolist()
 
@@ -201,34 +199,17 @@ class Net(nn.Module):
         return x
 
 
-def float_split(num: float):  # 暂时分割成两片
-    num_str = str(num)
-    first_piece = num_str[:4]
-    second_piece = num_str[4:6]
-    return(first_piece)
+# model = Net()
+# model_param = model.state_dict()
 
+# Param_compression(model_param)
+# print(model_param['fc.0.weight'][0][1])
+# Param_recovery(model_param)
+# print(type(model_param['fc.0.weight']))
+# print(model_param['fc.0.weight'][0][1])
 
-def Encode(array):
-    if not isinstance(array[0], list):
-        for i, num in enumerate(array):
-            array[i] = float_split(num)
-    else:
-        for subarray in array:
-            Encode(subarray)
+# d = '-4.2962e-05'  # -4.296e-05e-1
 
-
-# 输入：待传输的模型参数（state_dict），原地更改：列表内容是str的模型参数
-def Param_compression(dict: OrderedDict):
-    for key, value in dict.items():
-        temp = value.numpy().tolist()
-        Encode(temp)
-        model_param[key] = temp
-
-
-# print(torch.tensor(np.array(b)))
-model = Net()
-model_param = model.state_dict()
-
-
-Param_compression(model_param)
-print(model_param['fc.2.weight'])
+# print(float_to_str(-3.0011))
+# a = float_split(-9.8843e-03)  # 0.0010029
+# print(float(a))
