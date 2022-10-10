@@ -1,12 +1,15 @@
 from collections import OrderedDict
+import enum
 from operator import index
+from unicodedata import digit
 import numpy as np
 import torch.nn.functional as F
 import torch.nn as nn
 import torch
+import math
 from functions_for_trans import *
 
-a = torch.tensor([[-6.7633e-03, 2.1234, 3.1234], [
+a = torch.tensor([[-6.7633e-03, 0.00234, 0.234], [
                  4.1234, 5.1234, 6.1234], [7.1234, 8.1234, 9.1234]])
 
 b = a.numpy()
@@ -216,8 +219,49 @@ def code(array):
 a1 = torch.zeros_like(a)
 # print(b.shape)
 # b.reshape(1, -1)
+# for i in b[0]:
+#     print(i)
+
 # code(b)
 # b.reshape(3, 3)
 # print(b)
-print(c1.shape)
-print(c1.reshape(1, -1))
+# print(c1.shape)
+# print(c1.reshape(1, -1))
+
+
+def Quantify(number, Bits):
+    # 先确定有效位数，只看数值小于1的情况
+    if number >= 1:
+        return(number)
+    elif number < 0:
+        number = abs(number)
+        neg = -1
+    else:
+        neg = 1
+
+    digit = 0  # 小数点后0的个数
+    while 10*number < 1:
+        digit += 1
+        number *= 10
+
+    precision = 1/pow(2, Bits)
+    # print('precision is {}\n'.format(precision))
+    quant = 0
+    while quant+precision < number:
+        quant += precision
+
+    # print('after quantilize is {}\n'.format(quant))
+    # print('loss is {}\n'.format(number-quant))
+    return(neg*quant/pow(10, digit))
+
+
+# print(-6.7633e-03)
+# print(Quantify(0.2416, 4))
+
+sh = c1.shape
+c2 = c1.reshape(1, -1)
+# print(c2)
+for i, num in enumerate(c2[0]):
+    c2[0][i] = Quantify(num, 4)
+c2 = torch.from_numpy(c2.reshape(sh))
+print(c2)
