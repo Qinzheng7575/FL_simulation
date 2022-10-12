@@ -1,12 +1,8 @@
 from collections import OrderedDict
-import enum
-from operator import index
-from unicodedata import digit
 import numpy as np
 import torch.nn.functional as F
 import torch.nn as nn
 import torch
-import math
 from functions_for_trans import *
 
 a = torch.tensor([[-6.7633e-03, 0.00234, 0.234], [
@@ -230,15 +226,14 @@ a1 = torch.zeros_like(a)
 
 
 def Quantify(number, Bits):
-    # 先确定有效位数，只看数值小于1的情况
-    if number >= 1:
-        return(number)
-    elif number < 0:
+    if number < 0:
         number = abs(number)
         neg = -1
     else:
         neg = 1
 
+    integer = np.int(number)
+    number -= integer
     digit = 0  # 小数点后0的个数
     while 10*number < 1:
         digit += 1
@@ -252,16 +247,68 @@ def Quantify(number, Bits):
 
     # print('after quantilize is {}\n'.format(quant))
     # print('loss is {}\n'.format(number-quant))
-    return(neg*quant/pow(10, digit))
+    return(neg*(integer+quant/pow(10, digit)))
 
 
 # print(-6.7633e-03)
-# print(Quantify(0.2416, 4))
+print(Quantify(0.0562, 4))
 
-sh = c1.shape
-c2 = c1.reshape(1, -1)
+# sh = c1.shape
+# c2 = c1.reshape(1, -1)
 # print(c2)
-for i, num in enumerate(c2[0]):
-    c2[0][i] = Quantify(num, 4)
-c2 = torch.from_numpy(c2.reshape(sh))
-print(c2)
+# for i, num in enumerate(c2[0]):
+#     c2[0][i] = Quantify(num, 4)
+# c2 = torch.from_numpy(c2.reshape(sh))
+# print(c2)
+
+
+def Param_compression(dict: OrderedDict, Bits):
+    size = 0
+    for key, value in dict.items():
+        temp = value.numpy()
+        sh = temp.shape
+        temp = temp.reshape(1, -1)
+        for i, num in enumerate(temp[0]):
+            temp[0][i] = Quantify(num, Bits)
+        size += (4+Bits)*np.size(temp)
+        temp = torch.from_numpy(temp.reshape(sh))
+        dict[key] = temp
+    return(size)
+
+
+class Net(nn.Module):
+    def __init__(self):
+        super(Net, self).__init__()
+
+        self.conv = nn.Sequential(
+            nn.Conv2d(in_channels=1, out_channels=32, kernel_size=3, stride=1),
+            # 输出26*26*32
+            nn.ReLU(),
+            nn.Conv2d(in_channels=32, out_channels=64,
+                      kernel_size=3, stride=1),
+            # 输出24*24*64
+            nn.ReLU()
+        )
+
+        self.fc = nn.Sequential(
+            nn.Linear(in_features=64*12*12, out_features=128),
+            nn.ReLU(),
+            nn.Linear(in_features=128, out_features=10),
+        )
+        self.dropout = nn.Dropout2d(0.25)  # 随机丢弃
+
+    def forward(self, x):
+        x = self.conv(x)  # 输入的时候是28*28*1,输出应该是24*24*64
+        x = F.max_pool2d(x, 2)  # 用步长为2的池化,输出12*12*64
+        x = x.view(-1, 64*12*12)  # 此时将其拉成一条直线进入全连接
+        x = self.fc(x)
+        x = F.log_softmax(x, dim=1)
+        return x
+
+
+# model = Net()
+# model_param = model.state_dict()
+
+# print(Param_compression(model_param, 4))
+# print(model_param)
+0.0625
