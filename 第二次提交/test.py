@@ -1,10 +1,12 @@
+from functions_for_trans import *
 from collections import OrderedDict
 import numpy as np
 import torch.nn.functional as F
 import torch.nn as nn
 import torch
-from functions_for_trans import *
-
+import math
+# torch.set_printoptions(threshold=np.inf)
+# np.set_printoptions(threshold=math.inf)
 a = torch.tensor([[-6.7633e-03, 0.00234, 0.234], [
                  4.1234, 5.1234, 6.1234], [7.1234, 8.1234, 9.1234]])
 
@@ -201,28 +203,7 @@ class Net(nn.Module):
         return x
 
 
-def code(array):
-    if not isinstance(array[0], np.ndarray):
-        for i, num in enumerate(array):
-            array[i] = num+10
-    else:
-        for subarray in array:
-            code(subarray)
-# model = Net()
-# model_param = model.state_dict()
-
-
 a1 = torch.zeros_like(a)
-# print(b.shape)
-# b.reshape(1, -1)
-# for i in b[0]:
-#     print(i)
-
-# code(b)
-# b.reshape(3, 3)
-# print(b)
-# print(c1.shape)
-# print(c1.reshape(1, -1))
 
 
 def Quantify(number, Bits):
@@ -250,9 +231,6 @@ def Quantify(number, Bits):
     return(neg*(integer+quant/pow(10, digit)))
 
 
-# print(-6.7633e-03)
-print(Quantify(0.0562, 4))
-
 # sh = c1.shape
 # c2 = c1.reshape(1, -1)
 # print(c2)
@@ -272,6 +250,7 @@ def Param_compression(dict: OrderedDict, Bits):
             temp[0][i] = Quantify(num, Bits)
         size += (4+Bits)*np.size(temp)
         temp = torch.from_numpy(temp.reshape(sh))
+        print(temp)
         dict[key] = temp
     return(size)
 
@@ -306,9 +285,8 @@ class Net(nn.Module):
         return x
 
 
-# model = Net()
-# model_param = model.state_dict()
+model = Net()
+model_param = model.state_dict()
 
-# print(Param_compression(model_param, 4))
-# print(model_param)
-0.0625
+model_param = Param_compression(model_param, 4)
+print(model_param['fc.2.bias'])

@@ -8,8 +8,6 @@ import syft as sy
 from torch.utils.data import DataLoader
 import time
 import copy
-import os
-import numpy as np
 from functions_used import *
 hook = sy.TorchHook(torch)
 train_args = {

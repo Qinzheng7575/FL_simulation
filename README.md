@@ -132,7 +132,7 @@ float16 在精度上足够
 
 - [x] 数据结构的遍历和重组
 - [x] 数值科学计数法与量化
-- [ ] 变量长度计数
+- [x] 变量长度计数
 - [ ] 信道模拟、传输时延模拟
 - [ ] 基站接受策略
 - [ ] 最终训练
@@ -186,6 +186,22 @@ print(bin(0+1+1+1+1)) 二进制表示
           [ 0.0037,  0.0063,  0.0312]],
 ```
 
+原来是虚惊一场！
+
+```python
+ddd = np.array([-0.08125, -0.008125, 0.03125])
+tensor([-0.0813, -0.0081,  0.0312])
+print(torch.from_numpy(ddd))
+```
+
+<mark style="background: #FFB8EBA6;">还有，GPU 上的 tensor 不能直接转为 numpy，需要先放到 CPU 上。</mark>
+
+```python
+device=torch.device("cpu")#torch.device("cuda")
+a=torch.tensor([1,2])
+a.to(device)#放到CPU
+
 ---
 
 ### 信道模拟、传输时延模拟
+```
