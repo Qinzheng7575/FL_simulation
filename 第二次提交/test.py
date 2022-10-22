@@ -1,16 +1,26 @@
 from functions_for_trans import *
 from collections import OrderedDict
+import time
+from threading import Thread
 import numpy as np
 import torch.nn.functional as F
 import torch.nn as nn
 import torch
-import math
+import syft as sy
+import torch.optim as optim
+import copy
+hook = sy.TorchHook(torch)
 # torch.set_printoptions(threshold=np.inf)
 # np.set_printoptions(threshold=math.inf)
-a = torch.tensor([[-6.7633e-03, 0.00234, 0.234], [
-                 4.1234, 5.1234, 6.1234], [7.1234, 8.1234, 9.1234]])
-
-b = a.numpy()
+train_args = {
+    'use_cuda': True,
+    'batch_size': 16,
+    'test_batch_size': 2000,
+    'lr': 0.01,
+    'log_interval': 40,
+    'aggre_interval': 1,
+    'epochs': 1
+}
 
 c = torch.tensor([[[[-0.2771,  0.2636,  0.2257],
                   [-0.2511,  0.1435,  0.2170],
@@ -203,9 +213,6 @@ class Net(nn.Module):
         return x
 
 
-a1 = torch.zeros_like(a)
-
-
 def Quantify(number, Bits):
     if number < 0:
         number = abs(number)
@@ -231,16 +238,8 @@ def Quantify(number, Bits):
     return(neg*(integer+quant/pow(10, digit)))
 
 
-# sh = c1.shape
-# c2 = c1.reshape(1, -1)
-# print(c2)
-# for i, num in enumerate(c2[0]):
-#     c2[0][i] = Quantify(num, 4)
-# c2 = torch.from_numpy(c2.reshape(sh))
-# print(c2)
-
-
 def Param_compression(dict: OrderedDict, Bits):
+    # 输入是model的state_dict,原地进行操作，输出是模型大小(bit)
     size = 0
     for key, value in dict.items():
         temp = value.numpy()
@@ -250,7 +249,7 @@ def Param_compression(dict: OrderedDict, Bits):
             temp[0][i] = Quantify(num, Bits)
         size += (4+Bits)*np.size(temp)
         temp = torch.from_numpy(temp.reshape(sh))
-        print(temp)
+        # print(temp)
         dict[key] = temp
     return(size)
 
@@ -285,8 +284,44 @@ class Net(nn.Module):
         return x
 
 
-model = Net()
-model_param = model.state_dict()
+# model = Net()
+# model_param = model.state_dict()
+# size0 = Param_compression(model_param, 4)
+# print(size0)
 
-model_param = Param_compression(model_param, 4)
-print(model_param['fc.2.bias'])
+class UE():
+    def __init__(self, name: str, model: Net()) -> None:
+        self.name = sy.VirtualWorker(hook=hook, id=name)  # tag for pysyft
+        self.id = name
+        self.model = copy.deepcopy(model).send(self.name)
+        self.opt = optim.SGD(
+            params=self.model.parameters(), lr=train_args['lr'])
+        self.channel_rate = np.random.rand()  # 每个ue的信道速率,随机初始化
+        self.trans_delay = 0  # 传输耗时
+
+    def train(self, data, target):  # Local training of single device
+        self.opt.zero_grad()
+        output = self.model(data)
+        loss = F.nll_loss(output, target)
+        loss.backward()
+        self.opt.step()
+        return(loss.get())
+
+
+def Channel_rate(UE_list):
+    # 作为一个独立的后台线程，职责是为主线程提供信道速度
+    while True:
+        for ue in UE_list:
+            ue.channel_rate += np.random.rand()
+        time.sleep(2)
+
+
+def Trans_delay(ue: UE, size):
+    delay = size/ue.channel_rate
+    return(delay)
+
+
+'''How they used?
+t = Thread(target=Channel_rate, args=(UE_list,), daemon=True)
+t.start()
+'''

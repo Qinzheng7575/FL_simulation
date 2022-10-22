@@ -215,8 +215,8 @@ BS_model = copy.deepcopy(model)
 Loss_list = []
 init_ue(4)
 for epoch in range(1, train_args['epochs']+1):
-    train(train_args, UE_list, device, federated_train_loader, epoch)
+    # train(train_args, UE_list, device, federated_train_loader, epoch)
 
     # Select the model transport method according to the 'method'
-    test(UE_list, device, test_loader, method='base')
+    # test(UE_list, device, test_loader, method='base')
     # test(UE_list, device, test_loader, method='full')
