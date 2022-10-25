@@ -7,6 +7,7 @@ import syft as sy
 from torch.utils.data import DataLoader
 import time
 import copy
+from threading import Thread
 from functions_for_trans import *
 hook = sy.TorchHook(torch)
 train_args = {
@@ -80,6 +81,8 @@ class UE():
         self.model = copy.deepcopy(model).send(self.name)
         self.opt = optim.SGD(
             params=self.model.parameters(), lr=train_args['lr'])
+        self.channel_rate = np.random.rand()  # 每个ue的信道速率,随机初始化
+        self.trans_delay = 0  # 传输耗时
 
     def train(self, data, target):  # Local training of single device
         self.opt.zero_grad()
@@ -98,15 +101,16 @@ def init_ue(num: int):
 
 
 # Model aggregate with base value
-@Decorator.timer
+# @Decorator.timer
 def aggregate_with_base_value(source_list: list, out: Net):
     out_param = out.state_dict()
-    for source in source_list:
+    for source in source_list:  # source_list就是UE
         param = source.model.state_dict()
-        Param_compression(param)
-        Param_recovery(param)
-        for var in param:
-            out_param[var] = (param[var].to(device) + out_param[var])/2
+        data_size = Param_compression(param, 4)
+        print(data_size)
+        source.trans_delay = Trans_delay(source, data_size)
+        for var in param:  # 这里又将param的元素转成gpu上了
+            out_param[var] = (param[var].cuda() + out_param[var])/2
     out.load_state_dict(out_param)
     return(out_param)
 
@@ -157,8 +161,8 @@ def train(train_args, UEs: list, device, train_loader, epoch):
     for ue in UEs:
         ue.model.train()
     for batch_idx, (data, target) in enumerate(train_loader):
-        # if batch_idx > 100:
-        #     break
+        if batch_idx > 100:
+            break
         for rank, ue in enumerate(UEs):
             # distribute data
             data_distribute = distribute(data, len(UEs), rank)
@@ -194,6 +198,10 @@ def test(UEs: list, device, test_loader, **kw):
         elif kw['method'] == 'full':
             final_model_param = aggregate_with_full_model(UEs, BS_model)
 
+        for ue in UEs:
+            ue.model.load_state_dict(final_model_param)
+            ue.model.send(ue.name)
+
         for index, (data, target) in enumerate(test_loader):
             data, target = data.to(device), target.to(device)
             output = BS_model(data)
@@ -205,18 +213,19 @@ def test(UEs: list, device, test_loader, **kw):
                 print('\nTest set: Average loss: {:.8f}, Accuracy: {}/{} ({:.0f}%)\n'.format(
                     test_loss, correct, len(test_loader.dataset),
                     100. * correct / len(test_loader.dataset)))
-        for ue in UEs:
-            ue.model.load_state_dict(final_model_param)
-            ue.model.send(ue.name)
 
 
 model = Net().to(device)
 BS_model = copy.deepcopy(model)
 Loss_list = []
-init_ue(4)
+init_ue(2)
+# t = Thread(target=Channel_rate, args=(UE_list,), daemon=True)
+# t.start()
 for epoch in range(1, train_args['epochs']+1):
-    # train(train_args, UE_list, device, federated_train_loader, epoch)
+    train(train_args, UE_list, device, federated_train_loader, epoch)
 
     # Select the model transport method according to the 'method'
-    # test(UE_list, device, test_loader, method='base')
+    test(UE_list, device, test_loader, method='base')
     # test(UE_list, device, test_loader, method='full')
+    for ue in UE_list:
+        print('the ue{}\'s transport delay is {}'.format(ue.id, ue.trans_delay))

@@ -157,8 +157,8 @@ def train(train_args, UEs: list, device, train_loader, epoch):
     for ue in UEs:
         ue.model.train()
     for batch_idx, (data, target) in enumerate(train_loader):
-        # if batch_idx > 100:
-        #     break
+        if batch_idx > 100:
+            break
         for rank, ue in enumerate(UEs):
             # distribute data
             data_distribute = distribute(data, len(UEs), rank)
@@ -218,5 +218,5 @@ for epoch in range(1, train_args['epochs']+1):
     train(train_args, UE_list, device, federated_train_loader, epoch)
 
     # Select the model transport method according to the 'method'
-    test(UE_list, device, test_loader, method='base')
-    # test(UE_list, device, test_loader, method='full')
+    # test(UE_list, device, test_loader, method='base')
+    test(UE_list, device, test_loader, method='full')

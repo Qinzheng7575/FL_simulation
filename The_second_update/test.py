@@ -183,36 +183,6 @@ c = torch.tensor([[[[-0.2771,  0.2636,  0.2257],
 c1 = c.numpy()
 
 
-class Net(nn.Module):
-    def __init__(self):
-        super(Net, self).__init__()
-
-        self.conv = nn.Sequential(
-            nn.Conv2d(in_channels=1, out_channels=32, kernel_size=3, stride=1),
-            # 输出26*26*32
-            nn.ReLU(),
-            nn.Conv2d(in_channels=32, out_channels=64,
-                      kernel_size=3, stride=1),
-            # 输出24*24*64
-            nn.ReLU()
-        )
-
-        self.fc = nn.Sequential(
-            nn.Linear(in_features=64*12*12, out_features=128),
-            nn.ReLU(),
-            nn.Linear(in_features=128, out_features=10),
-        )
-        self.dropout = nn.Dropout2d(0.25)  # 随机丢弃
-
-    def forward(self, x):
-        x = self.conv(x)  # 输入的时候是28*28*1,输出应该是24*24*64
-        x = F.max_pool2d(x, 2)  # 用步长为2的池化,输出12*12*64
-        x = x.view(-1, 64*12*12)  # 此时将其拉成一条直线进入全连接
-        x = self.fc(x)
-        x = F.log_softmax(x, dim=1)
-        return x
-
-
 def Quantify(number, Bits):
     if number < 0:
         number = abs(number)
@@ -284,10 +254,12 @@ class Net(nn.Module):
         return x
 
 
-# model = Net()
-# model_param = model.state_dict()
-# size0 = Param_compression(model_param, 4)
-# print(size0)
+model = Net()
+model_param = model.state_dict()
+print(model_param['fc.2.weight'])
+size0 = Param_compression(model_param, 4)
+print(model_param['fc.2.weight'])
+
 
 class UE():
     def __init__(self, name: str, model: Net()) -> None:
