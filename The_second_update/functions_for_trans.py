@@ -50,12 +50,14 @@ def Param_compression(dict: OrderedDict, Bits):
 # print(size0)
 
 
-def Channel_rate(UE_list):
+def Channel_rate(UE_list, train_args):
     # 作为一个独立的后台线程，职责是为主线程提供信道速度
     while True:
         for ue in UE_list:
-            ue.channel_rate += np.random.rand()
-        time.sleep(2)
+            ue.channel_rate += train_args['rate_change_low'] +\
+                (train_args['rate_change_high'] -
+                 train_args['rate_change_low'])*np.random.rand()
+        time.sleep(0.5)
 
 
 def Trans_delay(ue, size):

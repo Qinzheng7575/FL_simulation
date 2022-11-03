@@ -133,8 +133,8 @@ float16 在精度上足够
 - [x] 数据结构的遍历和重组
 - [x] 数值科学计数法与量化
 - [x] 变量长度计数
-- [ ] 信道模拟、传输时延模拟
-- [ ] 基站接受策略
+- [x] 信道模拟、传输时延模拟
+- [x] 基站接受策略
 - [ ] 最终训练
 - [ ] 全局计时
 
@@ -200,11 +200,11 @@ print(torch.from_numpy(ddd))
 device=torch.device("cpu")#torch.device("cuda")
 a=torch.tensor([1,2])
 a.to(device)#放到CPU
+```
 
 ---
 
 ### 信道模拟、传输时延模拟
-```
 
 10.18 该正式写信道模拟的部分了
 
@@ -235,3 +235,116 @@ a.to(device)#放到CPU
 10.23
 遇到了一个非常奇怪的 bug，'NoneType' object has no attribute 'copy'，并且无论怎么搞都有问题。
 经过一下午的测试，终于发现，是装饰器把函数的返回值吞了！！！这个教训值得写一篇博客了。今天还看完了《献给阿尔吉侬的花束》，非常震撼心灵，难以忘怀。
+
+10.31
+有必要先进行参数的定义，这样可用快速推进下一步编程！
+UE 的初始速率下限 `initial_rate_low`，上限`initial_rate_high`
+UE 的速率变化下限`rate_change_low`，`rate_change_high`
+BS 接收门限`recv_threshold`，等待门限`wait_threshold`
+
+变量：
+UE 类中，`self.channel_rate初始速率、self.trans_delay传输耗时`
+
+---
+
+11.2 开始要最后的收尾冲刺了！冲冲冲！
+
+> 初始速率 1~100Mbps 正态分布
+> 变动范围 0~10Mbps 均匀
+> 0~50Mbps 正态
+> 建立一个模拟信道。计算传输时间。
+> 根据传输时间，判定能传/不能传，基站根据接受之后的计时器，判定继续接受还是纳入计算群中。
+> 基站进行模型聚合，进行训练。
+
+设计函数的时候，必须结合前后代码来看：
+此时遍历 UE_list，对某个 ue 训练好之后的 model 进行操作，进行 Param_compression，得到返回值 data_size 和压缩后的模型。同时，Channel_rate 函数正在并行运行，定期更改着每个 ue 的 self.channel_rate 变量。在 aggregate_with_base_value 对 ue 的 model 进行批量压缩的时候，已经将时延写入到对象里了。
+
+接下来首先应该计算传输时间，判断能不能传递
+**问题：得表现仿真出“等一下的感觉”**
+
+11.3
+先完善信道模拟的部分，对于正态分布要求的部分，让[0,100]落在$3\sigma$范围中因此$\mu=50$,$\sigma=16.67$,对于小于 0 的情况直接取绝对值。现在信道速率的仿真已经完毕了！
+函数 BS_receive，输入为 UE_list，输出为将要进行聚合的 ue 的 list，先将无法接收到的排除。注意，python 中等号都是引用，因此 ue 必须重新 load 压缩后的参数值，目前 BS_receive 已经编写完毕！
+
+下一步要做的：
+
+- [ ] 拉通看一遍代码有没有什么逻辑问题
+- [ ] 核对仿真参数，输出待聚合的 list 看一看是否满足仿真的环境，拒绝率有多少（可用给 ue 一个标志位标志自己是 full 还是 2bit 还是 4bit）
+- [ ] 正式仿真
+
+```python
+#一个很有用的函数：用来画一串数字的频率分布直方图
+def draw_distribution_histogram(nums, is_hist=True, is_kde=True, is_rug=False,
+
+                                is_vertical=False, is_norm_hist=False):
+
+    sns.set()   # 切换到sns的默认运行配置
+
+    sns.distplot(nums, bins=20, hist=is_hist, kde=is_kde, rug=is_rug,
+
+                 hist_kws={"color": "steelblue"}, kde_kws={"color": "purple"},
+
+                 vertical=is_vertical, norm_hist=is_norm_hist)
+
+    # 添加x轴和y轴标签
+
+    plt.xlabel("XXX")
+
+    plt.ylabel("YYY")
+
+    # 添加标题
+
+    plt.title("Distribution")
+
+    plt.tight_layout()  # 处理显示不完整的问题
+
+    plt.show()
+
+
+draw_distribution_histogram(y, True, True)
+```
+
+```python
+#看信道速率的动态变化
+model = Net()
+
+UE_list = []
+
+init_ue(10)
+
+t = Thread(target=Channel_rate, args=(UE_list, train_args,), daemon=True)
+
+t.start()
+
+x = []
+
+y = []
+
+for i in range(10):
+
+    y.append([])
+
+plt.ion()
+
+for i in range(20):
+
+    plt.clf()
+
+    x.append(i)
+
+    for num, ue in enumerate(UE_list):
+
+        y[num].append(ue.channel_rate)
+
+    for i, yn in enumerate(y):
+
+        plt.plot(x, yn, label='ue'+str(i+1))
+
+        plt.legend(loc=2)
+
+    plt.pause(0.5)
+
+plt.ioff()
+
+plt.show()
+```

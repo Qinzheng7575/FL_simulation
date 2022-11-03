@@ -8,6 +8,7 @@ from torch.utils.data import DataLoader
 import time
 import copy
 from threading import Thread
+from FL_for_Huawei.FL_simulation.The_second_update.test import BS_receive
 from functions_for_trans import *
 hook = sy.TorchHook(torch)
 train_args = {
@@ -17,7 +18,11 @@ train_args = {
     'lr': 0.01,
     'log_interval': 40,
     'aggre_interval': 1,
-    'epochs': 1
+    'epochs': 1,
+    'initial_rate_low': 10,
+    'initial_rate_high': 20,
+    'rate_change_low': -10,
+    'rate_change_high': 10
 }
 use_cuda = train_args['use_cuda'] and torch.cuda.is_available()
 device = torch.device("cuda" if use_cuda else "cpu")
@@ -81,7 +86,9 @@ class UE():
         self.model = copy.deepcopy(model).send(self.name)
         self.opt = optim.SGD(
             params=self.model.parameters(), lr=train_args['lr'])
-        self.channel_rate = np.random.rand()  # 每个ue的信道速率,随机初始化
+        self.channel_rate = train_args['initial_rate_low'] + \
+            (train_args['initial_rate_high'] -
+             train_args['initial_rate_low'])*np.random.rand()  # 每个ue的信道速率,随机初始化
         self.trans_delay = 0  # 传输耗时
 
     def train(self, data, target):  # Local training of single device
@@ -101,14 +108,12 @@ def init_ue(num: int):
 
 
 # Model aggregate with base value
-# @Decorator.timer
-def aggregate_with_base_value(source_list: list, out: Net):
+# @Decorator.timer  # 这个装饰器让我修了半天bug
+def aggregate_with_base_value(UEs: list, out: Net):
     out_param = out.state_dict()
-    for source in source_list:  # source_list就是UE
-        param = source.model.state_dict()
-        data_size = Param_compression(param, 4)
-        print(data_size)
-        source.trans_delay = Trans_delay(source, data_size)
+    aggre_list = BS_receive(UEs, train_args, True)  # 在里面再压缩一遍计算第二次的时延
+    for ue in aggre_list:
+        param = ue.model.state_dict()
         for var in param:  # 这里又将param的元素转成gpu上了
             out_param[var] = (param[var].cuda() + out_param[var])/2
     out.load_state_dict(out_param)
@@ -225,7 +230,7 @@ for epoch in range(1, train_args['epochs']+1):
     train(train_args, UE_list, device, federated_train_loader, epoch)
 
     # Select the model transport method according to the 'method'
-    test(UE_list, device, test_loader, method='base')
-    # test(UE_list, device, test_loader, method='full')
+    # test(UE_list, device, test_loader, method='base')
+    test(UE_list, device, test_loader, method='full')
     for ue in UE_list:
         print('the ue{}\'s transport delay is {}'.format(ue.id, ue.trans_delay))

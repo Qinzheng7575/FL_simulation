@@ -1,3 +1,6 @@
+import random
+import seaborn as sns
+from cProfile import label
 from functions_for_trans import *
 from collections import OrderedDict
 import time
@@ -9,6 +12,7 @@ import torch
 import syft as sy
 import torch.optim as optim
 import copy
+import matplotlib.pyplot as plt
 hook = sy.TorchHook(torch)
 # torch.set_printoptions(threshold=np.inf)
 # np.set_printoptions(threshold=math.inf)
@@ -19,9 +23,14 @@ train_args = {
     'lr': 0.01,
     'log_interval': 40,
     'aggre_interval': 1,
-    'epochs': 1
+    'epochs': 1,
+    'initial_rate_low': 1,
+    'initial_rate_high': 100,
+    'rate_change_low': -10,
+    'rate_change_high': 10,
+    'recv_threshold': 15,
+    'wait_threshold': 5
 }
-
 c = torch.tensor([[[[-0.2771,  0.2636,  0.2257],
                   [-0.2511,  0.1435,  0.2170],
     [0.3056, -0.2653, -0.1759]]],
@@ -180,7 +189,7 @@ c = torch.tensor([[[[-0.2771,  0.2636,  0.2257],
       [0.0332,  0.0100, -0.0945],
       [-0.2107, -0.2088,  0.2416]]]])
 
-c1 = c.numpy()
+# c1 = c.numpy()
 
 
 def Quantify(number, Bits):
@@ -212,7 +221,7 @@ def Param_compression(dict: OrderedDict, Bits):
     # 输入是model的state_dict,原地进行操作，输出是模型大小(bit)
     size = 0
     for key, value in dict.items():
-        temp = value.numpy()
+        temp = value.cpu().numpy()  # 放在cpu上才能转为numpy
         sh = temp.shape
         temp = temp.reshape(1, -1)
         for i, num in enumerate(temp[0]):
@@ -254,11 +263,11 @@ class Net(nn.Module):
         return x
 
 
-model = Net()
-model_param = model.state_dict()
-print(model_param['fc.2.weight'])
-size0 = Param_compression(model_param, 4)
-print(model_param['fc.2.weight'])
+# model = Net()
+# model_param = model.state_dict()
+# print(model_param['fc.2.weight'])
+# size0 = Param_compression(model_param, 4)
+# print(model_param['fc.2.weight'])
 
 
 class UE():
@@ -268,7 +277,9 @@ class UE():
         self.model = copy.deepcopy(model).send(self.name)
         self.opt = optim.SGD(
             params=self.model.parameters(), lr=train_args['lr'])
-        self.channel_rate = np.random.rand()  # 每个ue的信道速率,随机初始化
+        self.channel_rate = abs(np.random.normal(
+            (train_args['initial_rate_high']-train_args['initial_rate_low'])/2,
+            (train_args['initial_rate_high']-train_args['initial_rate_low'])/6))  # 每个ue的信道速率,随机初始化
         self.trans_delay = 0  # 传输耗时
 
     def train(self, data, target):  # Local training of single device
@@ -280,12 +291,20 @@ class UE():
         return(loss.get())
 
 
-def Channel_rate(UE_list):
+# def init_ue(num: int):
+#     for i in range(num):
+#         user = UE('user'+str(i+1), model)
+#         UE_list.append(user)
+
+
+def Channel_rate(UE_list, train_args):
     # 作为一个独立的后台线程，职责是为主线程提供信道速度
     while True:
         for ue in UE_list:
-            ue.channel_rate += np.random.rand()
-        time.sleep(2)
+            ue.channel_rate += train_args['rate_change_low'] +\
+                (train_args['rate_change_high'] -
+                 train_args['rate_change_low'])*np.random.rand()
+        time.sleep(0.5)
 
 
 def Trans_delay(ue: UE, size):
@@ -297,3 +316,23 @@ def Trans_delay(ue: UE, size):
 t = Thread(target=Channel_rate, args=(UE_list,), daemon=True)
 t.start()
 '''
+
+
+def BS_receive(UEs: list, train_args, grading):
+    aggre_list = UEs  # 最后将要进行本轮模型聚合的列表
+    for ue in UEs:  # 先遍历一遍进行压缩并计算时延
+        param = ue.model.state_dict()  # 引用
+        data_size = Param_compression(param, 2)
+        ue.trans_delay = Trans_delay(ue, data_size)  # 在这里已经将单个ue的模型大小写入到对象里了
+        ue.load_state_dict(param)
+
+    for ue in UEs:
+        if ue.trans_delay > train_args['recv_threshold']:
+            aggre_list.remove(ue)  # 直接不接收
+        elif grading == True:  # 基础值已经收到了该接受补充值了
+            param = ue.model.state_dict()
+            data_size = Param_compression(param, 4)
+            ue.trans_delay = Trans_delay(ue, data_size)
+            if ue.trans_delay < train_args['wait_threshold']:
+                ue.load_state_dict(param)  # 在等待时间以内，才能使用补充值的模型
+    return(aggre_list)
