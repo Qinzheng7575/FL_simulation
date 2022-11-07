@@ -28,8 +28,8 @@ train_args = {
     'initial_rate_high': 100,
     'rate_change_low': -10,
     'rate_change_high': 10,
-    'recv_threshold': 15,
-    'wait_threshold': 5
+    'recv_threshold': 1.9444,
+    'wait_threshold': 1.9444
 }
 c = torch.tensor([[[[-0.2771,  0.2636,  0.2257],
                   [-0.2511,  0.1435,  0.2170],
@@ -192,8 +192,10 @@ c = torch.tensor([[[[-0.2771,  0.2636,  0.2257],
 # c1 = c.numpy()
 
 
-def Quantify(number, Bits):
-    if number < 0:
+def Quantify(number, Bits):  # number是0的时候，卡死了
+    if number == 0:
+        return(0)
+    elif number < 0:
         number = abs(number)
         neg = -1
     else:
@@ -230,7 +232,7 @@ def Param_compression(dict: OrderedDict, Bits):
         temp = torch.from_numpy(temp.reshape(sh))
         # print(temp)
         dict[key] = temp
-    return(size)
+    return(10*size/(1024*1024)+np.random.randint(-5, 5))
 
 
 class Net(nn.Module):
@@ -263,10 +265,11 @@ class Net(nn.Module):
         return x
 
 
-# model = Net()
-# model_param = model.state_dict()
+model = Net()
+model_param = model.state_dict()
 # print(model_param['fc.2.weight'])
-# size0 = Param_compression(model_param, 4)
+size0 = Param_compression(model_param, 4)
+print(size0)
 # print(model_param['fc.2.weight'])
 
 
@@ -321,18 +324,23 @@ t.start()
 def BS_receive(UEs: list, train_args, grading):
     aggre_list = UEs  # 最后将要进行本轮模型聚合的列表
     for ue in UEs:  # 先遍历一遍进行压缩并计算时延
-        param = ue.model.state_dict()  # 引用
+        param = copy.deepcopy(ue.model.state_dict())  # 复制
         data_size = Param_compression(param, 2)
-        ue.trans_delay = Trans_delay(ue, data_size)  # 在这里已经将单个ue的模型大小写入到对象里了
-        ue.load_state_dict(param)
+        print(data_size)
+        ue.model.load_state_dict(param)
+        ue.trans_delay = Trans_delay(ue, data_size)
 
     for ue in UEs:
         if ue.trans_delay > train_args['recv_threshold']:
             aggre_list.remove(ue)  # 直接不接收
         elif grading == True:  # 基础值已经收到了该接受补充值了
-            param = ue.model.state_dict()
+            param = copy.deepcopy(ue.model.state_dict())
             data_size = Param_compression(param, 4)
             ue.trans_delay = Trans_delay(ue, data_size)
             if ue.trans_delay < train_args['wait_threshold']:
-                ue.load_state_dict(param)  # 在等待时间以内，才能使用补充值的模型
+                ue.model.load_state_dict(param)  # 在等待时间以内，才能使用补充值的模型
+            else:
+                break
+        else:
+            break
     return(aggre_list)

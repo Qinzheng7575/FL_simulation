@@ -8,7 +8,6 @@ from torch.utils.data import DataLoader
 import time
 import copy
 from threading import Thread
-from FL_for_Huawei.FL_simulation.The_second_update.test import BS_receive
 from functions_for_trans import *
 hook = sy.TorchHook(torch)
 train_args = {
@@ -19,10 +18,12 @@ train_args = {
     'log_interval': 40,
     'aggre_interval': 1,
     'epochs': 1,
-    'initial_rate_low': 10,
-    'initial_rate_high': 20,
+    'initial_rate_low': 1,
+    'initial_rate_high': 100,
     'rate_change_low': -10,
-    'rate_change_high': 10
+    'rate_change_high': 10,
+    'recv_threshold': 1.9444,
+    'wait_threshold': 1.9444
 }
 use_cuda = train_args['use_cuda'] and torch.cuda.is_available()
 device = torch.device("cuda" if use_cuda else "cpu")
@@ -111,8 +112,9 @@ def init_ue(num: int):
 # @Decorator.timer  # 这个装饰器让我修了半天bug
 def aggregate_with_base_value(UEs: list, out: Net):
     out_param = out.state_dict()
-    aggre_list = BS_receive(UEs, train_args, True)  # 在里面再压缩一遍计算第二次的时延
+    aggre_list = BS_receive(UEs, train_args, True)  # 返回要进行参数聚合的ue列表
     for ue in aggre_list:
+        print(ue.id)
         param = ue.model.state_dict()
         for var in param:  # 这里又将param的元素转成gpu上了
             out_param[var] = (param[var].cuda() + out_param[var])/2
@@ -121,7 +123,7 @@ def aggregate_with_base_value(UEs: list, out: Net):
 
 
 # Model aggregate with full value
-@Decorator.timer
+# @Decorator.timer
 def aggregate_with_full_model(source_list: list, out: Net):
     out_param = out.state_dict()
     for source in source_list:
@@ -161,7 +163,7 @@ test_loader = DataLoader(
 
 
 # FL system train
-@Decorator.timer
+# @Decorator.timer
 def train(train_args, UEs: list, device, train_loader, epoch):
     for ue in UEs:
         ue.model.train()
@@ -189,6 +191,8 @@ def train(train_args, UEs: list, device, train_loader, epoch):
 
 
 # BS performs aggregation and testing
+
+
 def test(UEs: list, device, test_loader, **kw):
     for ue in UEs:
         ue.model.eval()
@@ -223,14 +227,13 @@ def test(UEs: list, device, test_loader, **kw):
 model = Net().to(device)
 BS_model = copy.deepcopy(model)
 Loss_list = []
-init_ue(2)
-# t = Thread(target=Channel_rate, args=(UE_list,), daemon=True)
-# t.start()
+init_ue(4)
+# UE_list.pop() #可能是越界了？？？
+t = Thread(target=Channel_rate, args=(UE_list, train_args,), daemon=True)
+t.start()
 for epoch in range(1, train_args['epochs']+1):
-    train(train_args, UE_list, device, federated_train_loader, epoch)
-
+    train(train_args, UE_list[0:16], device, federated_train_loader, epoch)
+    train(train_args, UE_list[16:], device, federated_train_loader, epoch)
     # Select the model transport method according to the 'method'
-    # test(UE_list, device, test_loader, method='base')
-    test(UE_list, device, test_loader, method='full')
-    for ue in UE_list:
-        print('the ue{}\'s transport delay is {}'.format(ue.id, ue.trans_delay))
+    test(UE_list, device, test_loader, method='base')
+    # test(UE_list, device, test_loader, method='full')
