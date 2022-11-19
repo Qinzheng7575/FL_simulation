@@ -1,7 +1,3 @@
-import random
-import seaborn as sns
-from cProfile import label
-from functions_for_trans import *
 from collections import OrderedDict
 import time
 from threading import Thread
@@ -9,11 +5,12 @@ import numpy as np
 import torch.nn.functional as F
 import torch.nn as nn
 import torch
-import syft as sy
 import torch.optim as optim
 import copy
 import matplotlib.pyplot as plt
-hook = sy.TorchHook(torch)
+from torchvision import datasets, transforms
+
+from torch.utils.data import DataLoader
 # torch.set_printoptions(threshold=np.inf)
 # np.set_printoptions(threshold=math.inf)
 train_args = {
@@ -220,19 +217,16 @@ def Quantify(number, Bits):  # number是0的时候，卡死了
 
 
 def Param_compression(dict: OrderedDict, Bits):
-    # 输入是model的state_dict,原地进行操作，输出是模型大小(bit)
-    size = 0
+    # 输入是model的state_dict,原地进行操作
     for key, value in dict.items():
         temp = value.cpu().numpy()  # 放在cpu上才能转为numpy
         sh = temp.shape
         temp = temp.reshape(1, -1)
         for i, num in enumerate(temp[0]):
             temp[0][i] = Quantify(num, Bits)
-        size += (4+Bits)*np.size(temp)
         temp = torch.from_numpy(temp.reshape(sh))
-        # print(temp)
         dict[key] = temp
-    return(10*size/(1024*1024)+np.random.randint(-5, 5))
+    return(0)
 
 
 class Net(nn.Module):
@@ -265,17 +259,19 @@ class Net(nn.Module):
         return x
 
 
-model = Net()
-model_param = model.state_dict()
-# print(model_param['fc.2.weight'])
-size0 = Param_compression(model_param, 4)
-print(size0)
+# model = Net()
+# model_param = model.state_dict()
+# model1 = copy.deepcopy(model_param)
+
+# size0 = Param_compression(model_param, 4)
+# print(size0)
+# size1 = Param_compression(model1, 2)
+# print(size1)
 # print(model_param['fc.2.weight'])
 
 
 class UE():
     def __init__(self, name: str, model: Net()) -> None:
-        self.name = sy.VirtualWorker(hook=hook, id=name)  # tag for pysyft
         self.id = name
         self.model = copy.deepcopy(model).send(self.name)
         self.opt = optim.SGD(
@@ -321,26 +317,129 @@ t.start()
 '''
 
 
+def calculte_size(dict: OrderedDict, Bits):
+    size = 0
+    for _, value in dict.items():
+        temp = value.cpu().numpy()  # 放在cpu上才能转为numpy
+        temp = temp.reshape(1, -1)
+        size += (4+Bits)*np.size(temp)
+    return(10*size/(1024*1024)+np.random.randint(-5, 5))
+
+
 def BS_receive(UEs: list, train_args, grading):
     aggre_list = UEs  # 最后将要进行本轮模型聚合的列表
-    for ue in UEs:  # 先遍历一遍进行压缩并计算时延
-        param = copy.deepcopy(ue.model.state_dict())  # 复制
-        data_size = Param_compression(param, 2)
-        print(data_size)
-        ue.model.load_state_dict(param)
-        ue.trans_delay = Trans_delay(ue, data_size)
-
     for ue in UEs:
+        param = ue.model.state_dict()
+        data_size = calculte_size(param, 2)
+        print(data_size)
+        ue.trans_delay = Trans_delay(ue, data_size)  # 计算完这个ue的model大小
         if ue.trans_delay > train_args['recv_threshold']:
             aggre_list.remove(ue)  # 直接不接收
-        elif grading == True:  # 基础值已经收到了该接受补充值了
-            param = copy.deepcopy(ue.model.state_dict())
-            data_size = Param_compression(param, 4)
+        elif grading == True:  # 基础值已经收到了该接受增量值了
+            data_size = calculte_size(param, 4)
             ue.trans_delay = Trans_delay(ue, data_size)
             if ue.trans_delay < train_args['wait_threshold']:
-                ue.model.load_state_dict(param)  # 在等待时间以内，才能使用补充值的模型
+                Param_compression(param, 4)
+                ue.model.load_state_dict(param)
+                ue.label = 4
             else:
-                break
+                Param_compression(param, 2)
+                ue.model.load_state_dict(param)
+                ue.label = 2
         else:
             break
     return(aggre_list)
+
+
+def set_method(args: dict, quality: str):
+    if quality == 'perfect':
+        args['recv_threshold'] = 11.472
+    elif quality == 'good':
+        args['recv_threshold'] = 2.82
+        args['wait_threshold'] = 2.611
+    elif quality == 'mid':
+        args['recv_threshold'] = 1.8
+        args['wait_threshold'] = 1.88
+    elif quality == 'bad':
+        args['recv_threshold'] = 1.41
+        args['wait_threshold'] = 1.468
+    else:
+        exit()
+    return(args)
+
+
+def Quant(Vx, Q, RQM):
+    return round(Q * Vx) - RQM
+
+
+def QuantRevert(VxQuant, Q, RQM):
+    return (VxQuant + RQM) / Q
+
+
+def ListQuant(data_list, quant_bits):
+    # 数组范围估计
+    data_min = min(data_list)
+    data_max = max(data_list)
+
+    # 量化参数估计
+    Q = ((1 << quant_bits) - 1) * 1.0 / (data_max - data_min)
+    RQM = (int)(np.round(Q*data_min))
+
+    # 产生量化后的数组
+    quant_data_list = []
+    for x in data_list:
+        quant_data = Quant(x, Q, RQM)
+        quant_data_list.append(quant_data)
+    quant_data_list = np.array(quant_data_list)
+    return (Q, RQM, quant_data_list)
+
+
+def ListQuantRevert(quant_data_list, Q, RQM):
+    quant_revert_data_list = []
+    for quant_data in quant_data_list:
+        # 量化数据还原为原始浮点数据
+        revert_quant_data = QuantRevert(quant_data, Q, RQM)
+        quant_revert_data_list.append(revert_quant_data)
+    quant_revert_data_list = np.array(quant_revert_data_list)
+    return quant_revert_data_list
+
+
+def New_Param_compression(dict: OrderedDict, Bits):
+    # 输入是model的state_dict,原地进行操作
+    for key, value in dict.items():
+        temp = value.cpu().numpy()  # 放在cpu上才能转为numpy
+        sh = temp.shape
+        temp = temp.reshape(1, -1)
+        Q, RQM, temp[0] = ListQuant(temp[0], Bits)
+        temp[0] = ListQuantRevert(temp[0], Q, RQM)
+        temp = torch.from_numpy(temp.reshape(sh))
+        dict[key] = temp
+    return(0)
+
+
+federated_train_loader = DataLoader(
+    datasets.CIFAR10(
+        root='/cifar10',
+        train=True,
+        download=False,
+        transform=transforms.Compose([
+            transforms.Resize((32, 32)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.4750, 0.4750, 0.4750], std=[0.2008, 0.2008, 0.2008])]
+        )),
+    batch_size=train_args['batch_size'],
+    shuffle=True
+)
+
+
+def distribute(data: list, num: int, rank: int):
+    block = int(len(data)/num)
+    begin = rank
+    end = rank + block
+    return(data[begin:end])
+
+
+for batch_idx, (data, target) in enumerate(federated_train_loader):
+    for rank in (range(4)+1):
+        data_distribute = distribute(data, 4, rank)
+        target_distribute = distribute(target, 4, rank)

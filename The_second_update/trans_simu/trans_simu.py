@@ -7,16 +7,24 @@ import syft as sy
 from torch.utils.data import DataLoader
 import time
 import copy
-from functions_for_trans import *
+import matplotlib.pyplot as plt
+from threading import Thread
+from fun_trans_simu import *
 hook = sy.TorchHook(torch)
 train_args = {
     'use_cuda': True,
-    'batch_size': 16,
+    'batch_size': 64,
     'test_batch_size': 2000,
     'lr': 0.01,
     'log_interval': 40,
     'aggre_interval': 1,
-    'epochs': 1
+    'epochs': 1,
+    'initial_rate_low': 1,
+    'initial_rate_high': 100,
+    'rate_change_low': -10,
+    'rate_change_high': 10,
+    'recv_threshold': 1.9444,
+    'wait_threshold': 1.9444
 }
 use_cuda = train_args['use_cuda'] and torch.cuda.is_available()
 device = torch.device("cuda" if use_cuda else "cpu")
@@ -80,6 +88,11 @@ class UE():
         self.model = copy.deepcopy(model).send(self.name)
         self.opt = optim.SGD(
             params=self.model.parameters(), lr=train_args['lr'])
+        self.channel_rate = train_args['initial_rate_low'] + \
+            (train_args['initial_rate_high'] -
+             train_args['initial_rate_low'])*np.random.rand()  # 每个ue的信道速率,随机初始化
+        self.trans_delay = 0  # 传输耗时
+        self.label = 0
 
     def train(self, data, target):  # Local training of single device
         self.opt.zero_grad()
@@ -97,22 +110,19 @@ def init_ue(num: int):
         UE_list.append(user)
 
 
-# Model aggregate with base value
-# @Decorator.timer
-def aggregate_with_base_value(source_list: list, out: Net):
+def aggregate_with_base_value(UEs: list, out: Net):
     out_param = out.state_dict()
-    for source in source_list:
-        param = source.model.state_dict()
-        Param_compression(param)
-        Param_recovery(param)
-        for var in param:
-            out_param[var] = (param[var].to(device) + out_param[var])/2
+    aggre_list = BS_receive(UEs, train_args, True)  # 返回要进行参数聚合的ue列表
+    for ue in aggre_list:
+        if ue.label != 0:
+            print('{}, label: {}'.format(ue.id, ue.label))
+            param = ue.model.state_dict()
+            for var in param:  # 这里又将param的元素转成gpu上了
+                out_param[var] = (param[var].cuda() + out_param[var])/2
     out.load_state_dict(out_param)
     return(out_param)
 
 
-# Model aggregate with full value
-# @Decorator.timer
 def aggregate_with_full_model(source_list: list, out: Net):
     out_param = out.state_dict()
     for source in source_list:
@@ -151,14 +161,13 @@ test_loader = DataLoader(
 )
 
 
-# FL system train
-# @Decorator.timer
 def train(train_args, UEs: list, device, train_loader, epoch):
     for ue in UEs:
         ue.model.train()
     for batch_idx, (data, target) in enumerate(train_loader):
-        # if batch_idx > 100:
-        #     break
+        if batch_idx > 100:
+            break
+        avg_loss = 0
         for rank, ue in enumerate(UEs):
             # distribute data
             data_distribute = distribute(data, len(UEs), rank)
@@ -176,23 +185,37 @@ def train(train_args, UEs: list, device, train_loader, epoch):
                     ue.id,
                     loss.item()
                 ))
-                Loss_list.append(loss.item())
+                # Loss_list.append(loss.item())
+            avg_loss += loss.item()
+        avg_loss = avg_loss/len(UE_list)
+        Loss_list.append(avg_loss)
 
 
 # BS performs aggregation and testing
+
+
 def test(UEs: list, device, test_loader, **kw):
     for ue in UEs:
         ue.model.eval()
     test_loss = 0
+
     correct = 0  # correct rate
     with torch.no_grad():
         for ue in UEs:
             ue.model.get()
-
+        final_model_param = UEs[0].model.state_dict()
         if kw['method'] == 'base':
             final_model_param = aggregate_with_base_value(UEs, BS_model)
         elif kw['method'] == 'full':
             final_model_param = aggregate_with_full_model(UEs, BS_model)
+
+        BS_model.load_state_dict(final_model_param)
+
+        for ue in UEs:
+            ue.model.load_state_dict(final_model_param)
+            ue.model.send(ue.name)
+            print(ue.id, ue.label)
+            ue.label = 0  # 重新开始传输
 
         for index, (data, target) in enumerate(test_loader):
             data, target = data.to(device), target.to(device)
@@ -205,18 +228,24 @@ def test(UEs: list, device, test_loader, **kw):
                 print('\nTest set: Average loss: {:.8f}, Accuracy: {}/{} ({:.0f}%)\n'.format(
                     test_loss, correct, len(test_loader.dataset),
                     100. * correct / len(test_loader.dataset)))
-        for ue in UEs:
-            ue.model.load_state_dict(final_model_param)
-            ue.model.send(ue.name)
 
 
 model = Net().to(device)
 BS_model = copy.deepcopy(model)
-Loss_list = []
-init_ue(4)
+
+Loss_list = []  # 由于存在多个ue问题，这里应该改成平均loss
+init_ue(16)
+
+t = Thread(target=Channel_rate, args=(UE_list, train_args,), daemon=True)
+t.start()
+set_method(train_args, 'bad')
+
 for epoch in range(1, train_args['epochs']+1):
     train(train_args, UE_list, device, federated_train_loader, epoch)
-
-    # Select the model transport method according to the 'method'
-    # test(UE_list, device, test_loader, method='base')
-    test(UE_list, device, test_loader, method='full')
+    test(UE_list, device, test_loader, method='base')
+    with open("FL_for_Huawei\FL_simulation\The_second_update\\trans_simu\data_simu.txt", "a") as f:
+        f.write("bad channel loss:\n")
+        f.write(str(Loss_list)+'\n')
+    x = list(range(1, len(Loss_list)+1))
+    plt.plot(x, Loss_list)
+    plt.show()

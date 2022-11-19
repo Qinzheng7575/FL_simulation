@@ -5,31 +5,40 @@ import numpy as np
 import copy
 
 
-def Quantify(number, Bits):  # number是0的时候，卡死了
-    if number == 0:
-        return(0)
-    elif number < 0:
-        number = abs(number)
-        neg = -1
-    else:
-        neg = 1
+def Quant(Vx, Q, RQM):
+    return round(Q * Vx) - RQM
 
-    integer = np.int(number)
-    number -= integer
-    digit = 0  # 小数点后0的个数
-    while 10*number < 1:
-        digit += 1
-        number *= 10
 
-    precision = 1/pow(2, Bits)
-    # print('precision is {}\n'.format(precision))
-    quant = 0
-    while quant+precision < number:
-        quant += precision
+def QuantRevert(VxQuant, Q, RQM):
+    return (VxQuant + RQM) / Q
 
-    # print('after quantilize is {}\n'.format(quant))
-    # print('loss is {}\n'.format(number-quant))
-    return(neg*(integer+quant/pow(10, digit)))
+
+def ListQuant(data_list, quant_bits):
+    # 数组范围估计
+    data_min = min(data_list)
+    data_max = max(data_list)
+
+    # 量化参数估计
+    Q = ((1 << quant_bits) - 1) * 1.0 / (data_max - data_min)
+    RQM = (int)(np.round(Q*data_min))
+
+    # 产生量化后的数组
+    quant_data_list = []
+    for x in data_list:
+        quant_data = Quant(x, Q, RQM)
+        quant_data_list.append(quant_data)
+    quant_data_list = np.array(quant_data_list)
+    return (Q, RQM, quant_data_list)
+
+
+def ListQuantRevert(quant_data_list, Q, RQM):
+    quant_revert_data_list = []
+    for quant_data in quant_data_list:
+        # 量化数据还原为原始浮点数据
+        revert_quant_data = QuantRevert(quant_data, Q, RQM)
+        quant_revert_data_list.append(revert_quant_data)
+    quant_revert_data_list = np.array(quant_revert_data_list)
+    return quant_revert_data_list
 
 
 def Param_compression(dict: OrderedDict, Bits):
@@ -39,12 +48,12 @@ def Param_compression(dict: OrderedDict, Bits):
         temp = value.cpu().numpy()  # 放在cpu上才能转为numpy
         sh = temp.shape
         temp = temp.reshape(1, -1)
-        for i, num in enumerate(temp[0]):
-            temp[0][i] = Quantify(num, Bits)
+        Q, RQM, temp[0] = ListQuant(temp[0], Bits)
+        temp[0] = ListQuantRevert(temp[0], Q, RQM)
         size += (4+Bits)*np.size(temp)
         temp = torch.from_numpy(temp.reshape(sh))
         dict[key] = temp
-    return(10*size/(1024*1024)+np.random.randint(-5, 5))
+    return(10*size/(1024*1024)+np.random.randint(-2, 2))
 
 
 def Channel_rate(UE_list, train_args):

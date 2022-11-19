@@ -108,8 +108,7 @@ def init_ue(num: int):
         UE_list.append(user)
 
 
-# Model aggregate with base value
-# @Decorator.timer  # 这个装饰器让我修了半天bug
+# 需要大改
 def aggregate_with_base_value(UEs: list, out: Net):
     out_param = out.state_dict()
     aggre_list = BS_receive(UEs, train_args, True)  # 返回要进行参数聚合的ue列表
@@ -197,15 +196,18 @@ def test(UEs: list, device, test_loader, **kw):
     for ue in UEs:
         ue.model.eval()
     test_loss = 0
+
     correct = 0  # correct rate
     with torch.no_grad():
         for ue in UEs:
             ue.model.get()
-
+        final_model_param = UEs[0].model.state_dict()
         if kw['method'] == 'base':
             final_model_param = aggregate_with_base_value(UEs, BS_model)
         elif kw['method'] == 'full':
             final_model_param = aggregate_with_full_model(UEs, BS_model)
+
+        BS_model.load_state_dict(final_model_param)
 
         for ue in UEs:
             ue.model.load_state_dict(final_model_param)
@@ -226,14 +228,14 @@ def test(UEs: list, device, test_loader, **kw):
 
 model = Net().to(device)
 BS_model = copy.deepcopy(model)
+
 Loss_list = []
-init_ue(4)
+init_ue(20)
 # UE_list.pop() #可能是越界了？？？
 t = Thread(target=Channel_rate, args=(UE_list, train_args,), daemon=True)
 t.start()
+set_method(train_args, 'perfect')
 for epoch in range(1, train_args['epochs']+1):
     train(train_args, UE_list[0:16], device, federated_train_loader, epoch)
     train(train_args, UE_list[16:], device, federated_train_loader, epoch)
-    # Select the model transport method according to the 'method'
     test(UE_list, device, test_loader, method='base')
-    # test(UE_list, device, test_loader, method='full')
